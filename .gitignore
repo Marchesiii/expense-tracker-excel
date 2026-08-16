@@ -42,6 +42,9 @@ Thumbs.db
 *.xlsx
 *.csv
 *.pdf
+*.txt
+*.rar
+*.zip
 
 # Logs
 *.log

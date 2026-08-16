@@ -3,44 +3,39 @@ import os
 
 def parse_line_to_expense(line):
     """
-    Extrai data, descrição, id da operação e valor separando em partes.
+    Extrai data, categoria, id da operação e valor separando em partes.
     Classifica corretamente como ganho ou despesa.
     """
     parts = line.strip().split()
     if len(parts) < 6:
         return None
 
-    # 1. Data (primeira coluna)
     data = parts[0]
-
-    # 2.1 Procura o saldo R$
-    saldo_idx = None
-    parts_reversed = parts[::-1]
-    for i in range(len(parts_reversed)):
-        if parts_reversed[i] == "R$":
-            saldo_idx = len(parts) - i - 1
-            break
-    if saldo_idx is None or saldo_idx < 3:
+    r_values = [idx for idx, part in enumerate(parts) if part == "R$"]
+    if len(r_values) < 2:
         return None
 
-    # 3. Descrição (do segundo elemento até o anterior ao id da operação)
-    descricao = ' '.join(parts[1:saldo_idx])
+    amount_idx = r_values[-2]
+    amount_token = parts[amount_idx + 1] if amount_idx + 1 < len(parts) else None
+    if amount_token is None:
+        return None
 
-    # 5. Valor (Antes do SALDO, deve ser "R$", valor, "R$", saldo)
+    descricao_tokens = parts[1:amount_idx]
+    if descricao_tokens and descricao_tokens[-1].isdigit() and len(descricao_tokens[-1]) >= 6:
+        descricao_tokens = descricao_tokens[:-1]
+
+    descricao = ' '.join(descricao_tokens).strip()
+    if not descricao:
+        return None
+
     try:
-        valor_idx = saldo_idx - 2
-        if parts[valor_idx] == "R$":
-            valor_str = parts[valor_idx + 1].replace('.', '').replace(',', '.')
-            valor = float(valor_str)
-        else:
-            return None
-    except Exception:
+        valor = float(amount_token.replace('.', '').replace(',', '.'))
+    except ValueError:
         return None
 
     tipo = 'despesa' if valor < 0 else 'ganho'
     amount = abs(valor)
-    category = descricao
-    return {'data': data, 'amount': amount, 'category': category, 'tipo': tipo}
+    return {'data': data, 'amount': amount, 'category': descricao, 'tipo': tipo}
 
 def read_txt_expenses_from_folder(folder):
     """Lê todos os .txt da pasta e retorna DataFrame com data, amount, category, tipo."""

@@ -1,22 +1,25 @@
+# Script legado (pré-refatoração). Toda a lógica aqui já foi portada e reorganizada
+# em app/ (orquestração), services/ (regras de negócio) e ui/ (interface Tkinter).
+# Mantido apenas como referência histórica; não é usado pela aplicação ativa (main.py)
+# e seus imports relativos (process_pdf, process_txt) não resolvem fora de scripts/.
 from time import sleep
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 from process_pdf import process_pdfs_by_name
 from process_txt import read_txt_expenses_from_folder
+
 
 all_expenses_df = pd.DataFrame()
 nome_padrao = "Silvana"
 
 def format_currency(value):
-    """Formata o valor para o padrão R$ xx,xx."""
     return f"R$ {value:,.2f}".replace('.', 'X').replace(',', '.').replace('X', ',')
 
 def analyze_cashflow(df):
-    """Analisa o fluxo de caixa: ganhos totais, despesas totais e saldo."""
     if df is not None:
         total_gains = df[df['tipo'] == 'ganho']['amount'].sum()
         total_expenses = df[df['tipo'] == 'despesa']['amount'].sum()
@@ -25,21 +28,401 @@ def analyze_cashflow(df):
         return total_gains, total_expenses, balance, category_summary
     return None, None, None, None
 
+
+METAS_CATEGORIAS_PADRAO = {
+    'alimentação': 1800,
+    'transporte': 900,
+    'combustível': 1200,
+    'marketing': 700,
+    'estoque': 2500,
+    'manutenção': 600,
+    'outros': 500
+}
+
+def normalizar_colunas_padrao(df):
+    if df is None or df.empty:
+        return df
+
+    aliases = {
+        'data': ['data', 'date', 'Data', 'Date'],
+        'amount': ['amount', 'valor', 'Valor', 'valor_total', 'total', 'montante'],
+        'category': ['category', 'Category', 'categoria', 'Categoria', 'descricao', 'Descrição', 'description', 'Description'],
+        'tipo': ['tipo', 'Tipo', 'type', 'Type', 'natureza', 'Natureza']
+    }
+
+    df = df.copy()
+    for nome_padrao, nomes in aliases.items():
+        for nome in nomes:
+            if nome in df.columns and nome_padrao not in df.columns:
+                df = df.rename(columns={nome: nome_padrao})
+                break
+
+    if 'tipo' in df.columns:
+        df['tipo'] = df['tipo'].astype(str).str.strip().str.lower()
+        df['tipo'] = df['tipo'].replace({
+            'saida': 'despesa',
+            'gasto': 'despesa',
+            'expense': 'despesa',
+            'expenses': 'despesa',
+            'entrada': 'ganho',
+            'receita': 'ganho',
+            'income': 'ganho'
+        })
+
+    return df
+
+
+def normalizar_categoria(categoria):
+    if pd.isna(categoria):
+        return 'outros'
+    return str(categoria).strip().lower().replace('-', ' ').replace('_', ' ')
+
+
+def obter_meta_categoria(categoria, metas=None):
+    if metas is None:
+        metas = METAS_CATEGORIAS_PADRAO
+
+    nome = normalizar_categoria(categoria)
+    for chave, valor in metas.items():
+        if normalizar_categoria(chave) == nome:
+            return valor
+    return metas.get('outros', 0)
+
+
+def calcular_metas_por_categoria(df, metas=None):
+    if df is None or df.empty:
+        return pd.DataFrame(columns=['category', 'gasto', 'meta', 'restante', 'percentual', 'status'])
+
+    df = normalizar_colunas_padrao(df)
+    if 'category' not in df.columns or 'amount' not in df.columns or 'data' not in df.columns:
+        return pd.DataFrame(columns=['category', 'gasto', 'meta', 'restante', 'percentual', 'status'])
+
+    if metas is None:
+        metas = METAS_CATEGORIAS_PADRAO
+
+    df = df.copy()
+    df['amount'] = pd.to_numeric(df['amount'], errors='coerce')
+    df['data_dt'] = pd.to_datetime(df['data'], format='%d-%m-%Y', errors='coerce')
+    df = df.dropna(subset=['amount', 'category', 'data_dt'])
+    df = df[df['tipo'] == 'despesa']
+
+    if df.empty:
+        return pd.DataFrame(columns=['category', 'gasto', 'meta', 'restante', 'percentual', 'status'])
+
+    mes_atual = df['data_dt'].max().to_period('M')
+    df_mes = df[df['data_dt'].dt.to_period('M') == mes_atual]
+
+    resumo = df_mes.groupby('category')['amount'].sum().reset_index().rename(columns={'amount': 'gasto'})
+    resumo['meta'] = resumo['category'].apply(lambda categoria: obter_meta_categoria(categoria, metas))
+    resumo['restante'] = resumo['meta'] - resumo['gasto']
+    resumo['percentual'] = resumo.apply(
+        lambda row: (row['gasto'] / row['meta'] * 100) if row['meta'] else 0,
+        axis=1
+    )
+
+    def definir_status(row):
+        if row['meta'] == 0:
+            return 'sem meta'
+        if row['gasto'] <= row['meta']:
+            return 'dentro da meta'
+        if row['percentual'] <= 120:
+            return 'acima da meta'
+        return 'alerta crítico'
+
+    resumo['status'] = resumo.apply(definir_status, axis=1)
+    return resumo.sort_values(['percentual', 'gasto'], ascending=[False, False]).reset_index(drop=True)
+
+
+def previsao_proximo_mes(df, meses_considerados=3):
+    if df is None or df.empty:
+        return pd.DataFrame(columns=['category', 'media_historica', 'previsao_proximo_mes', 'status'])
+
+    df = normalizar_colunas_padrao(df)
+    if 'category' not in df.columns or 'amount' not in df.columns or 'data' not in df.columns:
+        return pd.DataFrame(columns=['category', 'media_historica', 'previsao_proximo_mes', 'status'])
+
+    df = df.copy()
+    df['amount'] = pd.to_numeric(df['amount'], errors='coerce')
+    df['data_dt'] = pd.to_datetime(df['data'], format='%d-%m-%Y', errors='coerce')
+    df = df.dropna(subset=['amount', 'category', 'data_dt'])
+    df = df[df['tipo'] == 'despesa']
+
+    if df.empty:
+        return pd.DataFrame(columns=['category', 'media_historica', 'previsao_proximo_mes', 'status'])
+
+    df['mes'] = df['data_dt'].dt.to_period('M')
+    historico = df.groupby(['category', 'mes'], as_index=False)['amount'].sum()
+    historico = historico.sort_values(['category', 'mes']).reset_index(drop=True)
+
+    historico_ultimos_meses = historico.groupby('category', group_keys=False).tail(meses_considerados)
+    media_por_categoria = (
+        historico_ultimos_meses
+        .groupby('category', as_index=False)['amount']
+        .mean()
+        .rename(columns={'amount': 'media_historica'})
+    )
+
+    ultima_data = historico['mes'].max()
+    ultimo_mes = historico[historico['mes'] == ultima_data].rename(columns={'amount': 'gasto_ultimo_mes'})
+
+    previsao = media_por_categoria.merge(ultimo_mes[['category', 'gasto_ultimo_mes']], on='category', how='left')
+    previsao['previsao_proximo_mes'] = previsao['media_historica'].round(2)
+    previsao['status'] = previsao.apply(
+        lambda row: 'acima da média' if row['previsao_proximo_mes'] > row['gasto_ultimo_mes'] else 'estável',
+        axis=1
+    )
+
+    return previsao[['category', 'media_historica', 'previsao_proximo_mes', 'status']].sort_values('previsao_proximo_mes', ascending=False).reset_index(drop=True)
+
+
+def dashboard_central(df):
+    if df is None or df.empty:
+        return {}
+
+    df = df.copy()
+    df['amount'] = pd.to_numeric(df['amount'], errors='coerce')
+    df['data_dt'] = pd.to_datetime(df['data'], format='%d-%m-%Y', errors='coerce')
+    df = df.dropna(subset=['amount', 'tipo', 'data_dt']).copy()
+    df = df[df['amount'] > 0]
+
+    total_ganhos = df[df['tipo'] == 'ganho']['amount'].sum()
+    total_despesas = df[df['tipo'] == 'despesa']['amount'].sum()
+    saldo_total = total_ganhos - total_despesas
+
+    mes_atual = df['data_dt'].max().to_period('M')
+    df_mes_atual = df[df['data_dt'].dt.to_period('M') == mes_atual]
+
+    ganhos_mes = df_mes_atual[df_mes_atual['tipo'] == 'ganho']['amount'].sum()
+    despesas_mes = df_mes_atual[df_mes_atual['tipo'] == 'despesa']['amount'].sum()
+    saldo_mes = ganhos_mes - despesas_mes
+
+    despesas_categorias = df[df['tipo'] == 'despesa'].groupby('category')['amount'].sum().sort_values(ascending=False)
+    maior_categoria = despesas_categorias.idxmax() if not despesas_categorias.empty else 'N/A'
+    maior_categoria_valor = despesas_categorias.max() if not despesas_categorias.empty else 0
+
+    resumo_mensal = df.groupby(df['data_dt'].dt.to_period('M'))['amount'].sum()
+    saldo_por_mes = df.groupby(df['data_dt'].dt.to_period('M')).apply(
+        lambda grupo: grupo[grupo['tipo'] == 'ganho']['amount'].sum() - grupo[grupo['tipo'] == 'despesa']['amount'].sum()
+    )
+
+    meses = sorted(df['data_dt'].dt.to_period('M').unique(), reverse=True)
+    tendencia = 'Em crescimento' if len(meses) > 1 and saldo_por_mes.iloc[-1] > saldo_por_mes.iloc[-2] else 'Em ajuste'
+
+    return {
+        'total_ganhos': total_ganhos,
+        'total_despesas': total_despesas,
+        'saldo_total': saldo_total,
+        'ganhos_mes': ganhos_mes,
+        'despesas_mes': despesas_mes,
+        'saldo_mes': saldo_mes,
+        'maior_categoria': maior_categoria,
+        'maior_categoria_valor': maior_categoria_valor,
+        'total_transacoes': len(df),
+        'tendencia': tendencia,
+        'mes_atual': str(mes_atual),
+        'saldo_por_mes': saldo_por_mes,
+        'resumo_mensal': resumo_mensal,
+    }
+
+
+def criar_dashboard_card(parent, titulo, valor, descricao, cor='#3498db'):
+    card = tk.Frame(parent, bg='white', bd=1, relief=tk.FLAT, highlightbackground='#dfe6e9', highlightthickness=1)
+    card.pack_propagate(False)
+    card.configure(width=220, height=120)
+
+    tk.Label(card, text=titulo, bg='white', fg='#4a627a', font=('Segoe UI', 9, 'bold')).pack(anchor='w', padx=12, pady=(12, 0))
+    tk.Label(card, text=valor, bg='white', fg=cor, font=('Segoe UI', 16, 'bold')).pack(anchor='w', padx=12, pady=(6, 0))
+    tk.Label(card, text=descricao, bg='white', fg='#6c7a89', font=('Segoe UI', 9)).pack(anchor='w', padx=12, pady=(6, 8))
+    return card
+
+
+def mostrar_dashboard_central():
+    if all_expenses_df is None or all_expenses_df.empty:
+        messagebox.showwarning('Dashboard', 'Nenhum dado disponível para montar o dashboard.')
+        return
+    
+    dados = dashboard_central(all_expenses_df)
+    if not dados:
+        messagebox.showwarning('Dashboard', 'Não foi possível montar o dashboard com os dados atuais.')
+        return
+
+    janela = tk.Toplevel()
+    janela.title('Dashboard Central')
+    janela.geometry('1100x650')
+    janela.configure(bg='#f0f2f5')
+
+    top = tk.Frame(janela, bg='#2c3e50', height=70)
+    top.pack(fill=tk.X)
+    tk.Label(top, text='📊 Dashboard Central', bg='#2c3e50', fg='white', font=('Segoe UI', 18, 'bold')).pack(pady=18)
+
+    metricas = tk.Frame(janela, bg='#f0f2f5')
+    metricas.pack(fill=tk.X, padx=20, pady=20)
+
+    cards = [
+        ('Ganhos Totais', format_currency(dados['total_ganhos']), f'Mês atual: {dados["mes_atual"]}', '#27ae60'),
+        ('Despesas Totais', format_currency(dados['total_despesas']), 'Gasto consolidado', '#e74c3c'),
+        ('Saldo Total', format_currency(dados['saldo_total']), 'Resultado geral', '#3498db'),
+        ('Saldo do Mês', format_currency(dados['saldo_mes']), f'Tendência: {dados["tendencia"]}', '#8e44ad'),
+    ]
+
+    for idx, (titulo, valor, detalhe, cor) in enumerate(cards):
+        card = criar_dashboard_card(metricas, titulo, valor, detalhe, cor)
+        card.grid(row=0, column=idx, padx=10, pady=5, sticky='nsew')
+
+    metricas.grid_columnconfigure((0, 1, 2, 3), weight=1)
+
+    body = tk.Frame(janela, bg='#f0f2f5')
+    body.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 20))
+
+    left = tk.LabelFrame(body, text='Resumo Operacional', bg='white', fg='#2c3e50', font=('Segoe UI', 11, 'bold'), padx=12, pady=12)
+    left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+
+    resumo = [
+        ('Ganhos no mês', format_currency(dados['ganhos_mes'])),
+        ('Despesas no mês', format_currency(dados['despesas_mes'])),
+        ('Categoria mais relevante', dados['maior_categoria']),
+        ('Maior gasto', format_currency(dados['maior_categoria_valor'])),
+        ('Transações registradas', str(dados['total_transacoes'])),
+    ]
+
+    for titulo, valor in resumo:
+        row = tk.Frame(left, bg='white')
+        row.pack(fill=tk.X, pady=6)
+        tk.Label(row, text=f'{titulo}:', bg='white', fg='#2c3e50', font=('Segoe UI', 10, 'bold')).pack(side=tk.LEFT)
+        tk.Label(row, text=str(valor), bg='white', fg='#4a627a', font=('Segoe UI', 10)).pack(side=tk.RIGHT)
+
+    right = tk.LabelFrame(body, text='Evolução por Mês', bg='white', fg='#2c3e50', font=('Segoe UI', 11, 'bold'), padx=12, pady=12)
+    right.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+    if not dados['saldo_por_mes'].empty:
+        chart = tk.Canvas(right, width=420, height=220, bg='white', highlightthickness=0)
+        chart.pack(fill=tk.BOTH, expand=True)
+
+        meses_ordenados = [str(period) for period in dados['saldo_por_mes'].index]
+        saldos = list(dados['saldo_por_mes'].values)
+
+        max_valor = max(abs(v) for v in saldos) if saldos else 1
+        chart_w = 400
+        chart_h = 180
+        margin = 25
+        step_x = (chart_w - 2 * margin) / max(len(saldos), 1)
+
+        for i, valor in enumerate(saldos):
+            x0 = margin + i * step_x
+            x1 = x0 + step_x * 0.7
+            y0 = chart_h - margin
+            altura = (abs(valor) / max_valor) * (chart_h - 2 * margin)
+            y_top = y0 - altura if valor >= 0 else y0
+            cor_bar = '#27ae60' if valor >= 0 else '#e74c3c'
+            chart.create_rectangle(x0, y_top, x1, y0, fill=cor_bar, outline='')
+            chart.create_text(x0 + (x1 - x0) / 2, y0 + 15, text=f'{valor:,.0f}', fill='#2c3e50', font=('Segoe UI', 8))
+
+        for idx, label in enumerate(meses_ordenados[-8:]):
+            x = margin + idx * (chart_w - 2 * margin) / max(len(meses_ordenados[-8:]), 1)
+            chart.create_text(x, chart_h - 8, text=label[-2:], fill='#2c3e50', font=('Segoe UI', 7))
+    else:
+        tk.Label(right, text='Sem dados suficientes para exibir evolução.', bg='white', fg='#6c7a89', font=('Segoe UI', 10)).pack(pady=60)
+
+
+def gerar_dashboard_central():
+    try:
+        mostrar_dashboard_central()
+    except Exception as e:
+        messagebox.showerror('Erro no dashboard', str(e))
+
+
+def mostrar_alertas_financeiros():
+    try:
+        if all_expenses_df is None or all_expenses_df.empty:
+            messagebox.showwarning('Alertas', 'Nenhum dado disponível para avaliar metas.')
+            return
+
+        df = normalizar_colunas_padrao(all_expenses_df)
+        colunas_necessarias = {'data', 'tipo', 'category', 'amount'}
+        faltando = colunas_necessarias - set(df.columns)
+        if faltando:
+            messagebox.showwarning('Alertas', f'Os dados carregados não têm as colunas necessárias: {sorted(faltando)}')
+            return
+
+        df = df.copy()
+        df['amount'] = pd.to_numeric(df['amount'], errors='coerce')
+        df = df.dropna(subset=['amount', 'category', 'tipo', 'data'])
+        df = df[df['tipo'].isin(['despesa', 'ganho'])]
+
+        if df.empty:
+            messagebox.showwarning('Alertas', 'Não há lançamentos válidos para gerar alertas.')
+            return
+
+        metas = calcular_metas_por_categoria(df)
+        previsao = previsao_proximo_mes(df)
+
+        if metas.empty and previsao.empty:
+            messagebox.showwarning('Alertas', 'Não há dados suficientes para gerar alertas.')
+            return
+
+        if not metas.empty:
+            tabela = metas.copy()
+            if not previsao.empty:
+                tabela = tabela.merge(previsao[['category', 'previsao_proximo_mes']], on='category', how='left')
+            tabela['alerta'] = tabela.apply(
+                lambda row: 'META EXCEDIDA' if row.get('status') in ['acima da meta', 'alerta crítico'] else 'SEM ALERTA',
+                axis=1
+            )
+            if 'previsao_proximo_mes' in tabela.columns:
+                tabela['alerta'] = tabela.apply(
+                    lambda row: 'PREVISÃO ACIMA DA META' if pd.notna(row.get('previsao_proximo_mes')) and row.get('meta', 0) and row.get('previsao_proximo_mes', 0) > row.get('meta', 0) else row.get('alerta', 'SEM ALERTA'),
+                    axis=1
+                )
+        else:
+            tabela = previsao.copy()
+            tabela['meta'] = 0
+            tabela['gasto'] = 0
+            tabela['restante'] = 0
+            tabela['percentual'] = 0
+            tabela['status'] = 'sem histórico'
+            tabela['alerta'] = 'PREVISÃO ACIMA DA META' if (tabela['previsao_proximo_mes'] > 0).any() else 'SEM ALERTA'
+
+        janela = tk.Toplevel()
+        janela.title('Metas e Alertas')
+        janela.geometry('980x420')
+        janela.configure(bg='#f0f2f5')
+
+        cabecalho = tk.Frame(janela, bg='#2c3e50', height=60)
+        cabecalho.pack(fill=tk.X)
+        tk.Label(cabecalho, text='⚠️ Metas por Categoria e Alertas', bg='#2c3e50', fg='white', font=('Segoe UI', 16, 'bold')).pack(pady=14)
+
+        tree = ttk.Treeview(janela, columns=('Categoria', 'Gasto Atual', 'Meta', 'Restante', 'Previsão Próx. Mês', 'Status', 'Alerta'), show='headings')
+        tree.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
+
+        for col in ('Categoria', 'Gasto Atual', 'Meta', 'Restante', 'Previsão Próx. Mês', 'Status', 'Alerta'):
+            tree.heading(col, text=col)
+            tree.column(col, anchor='center', width=120)
+
+        for idx, (_, row) in enumerate(tabela.iterrows()):
+            cor = '#e74c3c' if row.get('alerta', 'SEM ALERTA') != 'SEM ALERTA' else '#27ae60'
+            tag = f'alerta_{idx}'
+            tree.insert('', 'end', values=(
+                row.get('category', 'N/A'),
+                format_currency(row.get('gasto', 0)),
+                format_currency(row.get('meta', 0)),
+                format_currency(row.get('restante', 0)),
+                format_currency(row.get('previsao_proximo_mes', 0)),
+                row.get('status', 'sem histórico'),
+                row.get('alerta', 'SEM ALERTA')
+            ))
+
+            tree.item(tree.get_children()[-1], tags=(tag,))
+            tree.tag_configure(tag, background='white', foreground=cor)
+
+        if tabela.empty:
+            tk.Label(janela, text='Sem registros suficientes.', fg='#6c7a89', font=('Segoe UI', 10)).pack(pady=30)
+
+        rodape = tk.Label(janela, text='Atenção: alertas aparecem em vermelho quando a categoria ultrapassa a meta ou a previsão do próximo mês supera o limite.', bg='#f0f2f5', fg='#2c3e50', font=('Segoe UI', 9))
+        rodape.pack(pady=(0, 12))
+    except Exception as e:
+        messagebox.showerror('Erro em Metas e Alertas', f'Não foi possível abrir a tela de alertas:\n{e}')
+
 def build_summary_df(df, group_cols, value_col='amount', tipo_col='tipo', extrai_func=None, aggfunc='sum'):
-    """
-    Gera um DataFrame resumo agrupado por colunas dinâmicas.
-
-    Parâmetros:
-    - df: DataFrame original
-    - group_cols: lista de colunas para agrupar (ex: ['category', 'tipo'])
-    - value_col: coluna de valores numéricos (default: 'amount')
-    - tipo_col: coluna que separa 'ganho' e 'despesa'
-    - extrai_func: função opcional para tratar nomes de categoria (aplicada apenas se 'category' estiver em group_cols)
-    - aggfunc: função de agregação (default: 'sum')
-
-    Retorna:
-    - DataFrame agrupado com colunas de agrupamento + ganhos, despesas e saldo
-    """
     if df is None or df.empty:
         print("Nenhum dado disponível para o relatório.")
         return pd.DataFrame()
@@ -77,7 +460,6 @@ def build_summary_df(df, group_cols, value_col='amount', tipo_col='tipo', extrai
     return pd.DataFrame(resultados)
 
 def category_report(df):
-    """Gera um relatório de categorias de despesas e ganhos."""
     if df is None or df.empty:
         print("Nenhum dado disponível para o relatório mensal.")
         return
@@ -119,7 +501,6 @@ def extraiCategoria(categoria):
     return categoriasplit
 
 def monthly_report(df):
-    """Gera um relatório de ganhos e despesas por mês."""
     if df is None or df.empty:
         print("Nenhum dado disponível para o relatório mensal.")
         return
@@ -197,7 +578,6 @@ def categoriasFixas(df):
 
 
 def daily_report(df, diaIn=None):
-    """Gera um relatório de ganhos e despesas por dia, com detalhes."""
     if df is None or df.empty:
         return None, []
 
@@ -231,7 +611,6 @@ def mostrar_dataframe(df):
 
     from tkinter import ttk
     
-    # Criar estilo
     estilo = ttk.Style()
     estilo.theme_use('clam')
     estilo.configure("Treeview",
@@ -246,7 +625,6 @@ def mostrar_dataframe(df):
                      font=("Segoe UI", 10, "bold"))
     estilo.map('Treeview', background=[('selected', '#2980b9')])
     
-    # Frame para título
     title_frame = tk.Frame(janela, bg="#2c3e50", height=50)
     title_frame.pack(fill=tk.X)
     
@@ -258,11 +636,9 @@ def mostrar_dataframe(df):
         fg="white"
     ).pack(pady=12)
     
-    # Frame para o Treeview
     tree_frame = tk.Frame(janela, bg="#f0f2f5")
     tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
     
-    # Scrollbars
     scrollbar_y = ttk.Scrollbar(tree_frame)
     scrollbar_y.pack(side=tk.RIGHT, fill=tk.Y)
     
@@ -297,7 +673,6 @@ def mostrar_dataframe(df):
     else:
         tree.insert("", "end", values=("Nenhum dado disponível",))
     
-    # Frame para rodapé
     footer_frame = tk.Frame(janela, bg="#2c3e50", height=40)
     footer_frame.pack(fill=tk.X, side=tk.BOTTOM)
     
@@ -310,58 +685,60 @@ def mostrar_dataframe(df):
     ).pack(pady=8)
 
 def geraGraficos(df):
-    """Gera gráficos de ganhos e despesas por mês."""
 
     if df is None or df.empty:
         print("Nenhum dado disponível para gerar gráficos.")
         return
 
+    plt.close('all')
+
     df = df.copy()
     df['mês'] = pd.to_datetime(df['data'], format='%d-%m-%Y', errors='coerce').dt.to_period('M')
 
     resumo = df.groupby(['mês', 'tipo'])['amount'].sum().unstack(fill_value=0)
-
     resumo = resumo.reset_index()
     resumo['mês'] = resumo['mês'].astype(str)
 
     sns.set_style("white")
-    plt.grid(axis='y', linestyle='--', alpha=0.3)
 
-
-    plt.figure(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=(10, 6))
     bar_width = 0.4
     x = range(len(resumo))
 
     ganhos = resumo.get('ganho', 0)
     despesas = resumo.get('despesa', 0)
 
-    rects1 = plt.bar(x, ganhos, width=bar_width, label='Ganhos', color='skyblue')
-    rects2 = plt.bar([i + bar_width for i in x], despesas, width=bar_width, label='Despesas', color='salmon')
+    rects1 = ax.bar(x, ganhos, width=bar_width, label='Ganhos', color='skyblue')
+    rects2 = ax.bar([i + bar_width for i in x], despesas, width=bar_width, label='Despesas', color='salmon')
 
-    plt.xticks([i + bar_width / 2 for i in x], resumo['mês'], rotation=45)
-    plt.title('Ganhos vs Despesas Mensais', fontsize=16, weight='bold')
-    plt.xlabel('Mês', fontsize=12)
-    plt.ylabel('Valor (R$)', fontsize=12)
+    ax.grid(axis='y', linestyle='--', alpha=0.3)
+    ax.set_xticks([i + bar_width / 2 for i in x])
+    ax.set_xticklabels(resumo['mês'], rotation=45)
+    ax.set_title('Ganhos vs Despesas Mensais', fontsize=16, weight='bold')
+    ax.set_xlabel('Mês', fontsize=12)
+    ax.set_ylabel('Valor (R$)', fontsize=12)
+
     resumo['saldo'] = resumo['ganho'] - resumo['despesa']
-    plt.plot(x, resumo['saldo'], marker='o', linestyle='--', color='gray', label='Saldo')
+    ax.plot(x, resumo['saldo'], marker='o', linestyle='--', color='gray', label='Saldo')
+
     for i, saldo in enumerate(resumo['saldo']):
         cor = 'green' if saldo >= 0 else 'red'
-        plt.text(i, saldo + 500, f'R$ {saldo:,.2f}', ha='center', fontsize=9, color=cor)
-    plt.legend()
+        ax.text(i, saldo + 500, f'R$ {saldo:,.2f}', ha='center', fontsize=9, color=cor)
+
+    ax.legend()
 
     def autolabel(rects):
         for rect in rects:
             height = rect.get_height()
-            plt.annotate(f'R$ {height:,.2f}',
+            ax.annotate(f'R$ {height:,.2f}',
                         xy=(rect.get_x() + rect.get_width() / 2, height / 2),
                         ha='center', va='center',
                         color='black', fontsize=9)
 
-
     autolabel(rects1)
     autolabel(rects2)
 
-    plt.tight_layout()
+    fig.tight_layout()
     plt.show()
 
 def gerar_relatorios():
@@ -477,20 +854,13 @@ def criar_interface():
     root.geometry("900x750")
     root.configure(bg="#f0f2f5")
     
-    # Configurar estilo
     estilo_titulo = ("Segoe UI", 20, "bold")
-    estilo_subtitulo = ("Segoe UI", 11, "")
-    estilo_botao = ("Segoe UI", 10, "")
     
-    # Cores do tema
     cor_primaria = "#2c3e50"
     cor_secundaria = "#3498db"
     cor_sucesso = "#27ae60"
     cor_atencao = "#e74c3c"
-    cor_fundo_claro = "#ecf0f1"
-    cor_texto = "#2c3e50"
-    
-    # ===== HEADER =====
+
     header_frame = tk.Frame(root, bg=cor_primaria, height=80)
     header_frame.pack(fill=tk.X, side=tk.TOP)
     
@@ -510,11 +880,9 @@ def criar_interface():
         fg="#bdc3c7"
     ).pack()
     
-    # ===== MAIN CONTENT =====
     main_frame = tk.Frame(root, bg="#f0f2f5")
     main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
     
-    # ===== SEÇÃO 1: IMPORTAÇÃO DE DADOS =====
     section1 = tk.LabelFrame(
         main_frame,
         text="📥 Importação de Dados",
@@ -535,7 +903,6 @@ def criar_interface():
     criar_botao(row1, "📥 Ler Dados", ler_dados, cor_sucesso).pack(side=tk.LEFT, padx=5)
     criar_botao(row1, "🧹 Limpar Dados", limpar_dados, cor_atencao).pack(side=tk.LEFT, padx=5)
     
-    # ===== SEÇÃO 2: ANÁLISE E RESUMOS =====
     section2 = tk.LabelFrame(
         main_frame,
         text="📊 Análise e Resumos",
@@ -554,15 +921,16 @@ def criar_interface():
     
     criar_botao(row2a, "📄 Resumo Executivo", gerar_resumo, cor_secundaria).pack(side=tk.LEFT, padx=5)
     criar_botao(row2a, "🧮 Verificar Totais", verificar_totais, "#16a085").pack(side=tk.LEFT, padx=5)
+    criar_botao(row2a, "Dashboard Central", gerar_dashboard_central, "#1abc9c").pack(side=tk.LEFT, padx=5)
     criar_botao(row2a, "📈 Gráficos Mensais", gerar_graficos, "#8e44ad").pack(side=tk.LEFT, padx=5)
     
     row2b = tk.Frame(section2, bg="white")
     row2b.pack(fill=tk.X, pady=8)
     
     criar_botao(row2b, "📊 Categorias", lambda: mostrar_dataframe(category_report(all_expenses_df)), cor_secundaria).pack(side=tk.LEFT, padx=5)
+    criar_botao(row2b, "⚠️ Metas e Alertas", mostrar_alertas_financeiros, "#f39c12").pack(side=tk.LEFT, padx=5)
     criar_botao(row2b, "📑 Relatórios", gerar_relatorios, "#f39c12").pack(side=tk.LEFT, padx=5)
     
-    # ===== SEÇÃO 3: RELATÓRIOS DETALHADOS =====
     section3 = tk.LabelFrame(
         main_frame,
         text="📋 Relatórios Detalhados",
@@ -588,7 +956,6 @@ def criar_interface():
     criar_botao(row3b, "📅 Relatório Diário", gerar_relatorio_dia, "#d35400").pack(side=tk.LEFT, padx=5)
     criar_botao(row3b, "📊 Visualizar Dados", lambda: mostrar_dataframe(all_expenses_df), "#34495e").pack(side=tk.LEFT, padx=5)
     
-    # ===== FOOTER =====
     footer_frame = tk.Frame(root, bg=cor_primaria, height=40)
     footer_frame.pack(fill=tk.X, side=tk.BOTTOM)
     
@@ -622,7 +989,6 @@ def criar_interface():
     root.mainloop()
 
 def criar_botao(parent, texto, comando, cor_fundo):
-    """Cria um botão com estilo moderno."""
     botao = tk.Button(
         parent,
         text=texto,
@@ -639,7 +1005,6 @@ def criar_botao(parent, texto, comando, cor_fundo):
         bd=0
     )
     
-    # Efeito hover
     def on_enter(event):
         botao.config(bg=ajustar_cor(cor_fundo, -15))
     

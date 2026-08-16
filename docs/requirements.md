@@ -38,8 +38,12 @@
 - **tkinter**: GUI toolkit for user interfaces
 
 ### Local Modules
-- **process_pdf**: Module for PDF processing and generation
-- **process_txt**: Module for text file parsing and processing
+- **app**: Application orchestration (Controller) — `ExpenseTrackerApp`
+- **services**: Business logic (Model) — normalization, financial analysis, alerts, forecasting
+- **domain**: Typed contracts used by services — enums (`TransactionType`, `AlertStatus`) and validators
+- **ui**: Tkinter windows (View)
+- **scripts.process_pdf**: Module for PDF processing and generation
+- **scripts.process_txt**: Module for text file parsing and processing
 
 ## Installation
 
@@ -70,15 +74,36 @@ python -c "import pandas, matplotlib, seaborn, openpyxl; print('All dependencies
 
 ```
 expense-tracker-excel/
+├── main.py                # Entry point
+├── app/
+│   └── app.py             # ExpenseTrackerApp (Controller)
+├── services/               # Business logic (Model)
+│   ├── data_loader.py
+│   ├── normalization_service.py
+│   ├── financial_service.py
+│   ├── alert_service.py
+│   └── forecast_service.py
+├── domain/                 # Typed contracts (Model)
+│   ├── enums.py
+│   ├── models.py
+│   └── validators.py
+├── ui/                      # Tkinter windows (View)
+│   ├── main_window.py
+│   ├── dashboard_window.py
+│   ├── styles.py
+│   └── widgets.py
 ├── data/
 │   └── pdf/              # PDF (usually Mercado Pago) export directory 
 │       └── Silvana/      # User-specific expense data
 ├── scripts/
 │   ├── process_excel.py  # Excel file processing
-│   ├── process_expenses.py  # Main expense analysis
 │   ├── process_pdf.py    # PDF generation/processing
 │   ├── process_txt.py    # Text file processing
 │   └── generate_sample_expenses.py  # Sample data generator
+├── legacy/
+│   └── process_expenses.py  # Pre-refactor monolith, kept for historical reference only
+├── tests/
+│   └── test_services.py
 ├── docs/
 │   └── requirements.md   # This file
 └── README.md            # Project overview
@@ -86,11 +111,9 @@ expense-tracker-excel/
 
 ## Scripts Overview
 
-### `process_expenses.py`
-- **Purpose**: Main script for analyzing and summarizing expenses
-- **Input**: Excel file with expense data
-- **Output**: Processed expense reports and statistics
-- **Usage**: `python scripts/process_expenses.py`
+### `main.py`
+- **Purpose**: Entry point for the active application (MVC: `app/` Controller → `services/`+`domain/` Model → `ui/` View)
+- **Usage**: `python main.py`
 
 ### `process_excel.py`
 - **Purpose**: Handle Excel file operations and transformations
@@ -119,9 +142,9 @@ expense-tracker-excel/
    - Ensure expense data is in the correct format (see [Data Format](#data-format))
    - Place Excel files in the project directory
 
-2. **Run the Main Script**
+2. **Run the Application**
    ```bash
-   python scripts/process_expenses.py
+   python main.py
    ```
 
 3. **Review Results**

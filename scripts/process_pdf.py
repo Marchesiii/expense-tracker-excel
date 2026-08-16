@@ -51,7 +51,7 @@ def convert_pdf_to_text(pdf_file, output_txt_file):
                 else:
                     buffer = line.strip()  # fallback, caso não encontre a data
             else:
-                buffer += line.strip()
+                buffer += line.lstrip()
 
         if buffer:
             reconstructed.append(buffer.strip())

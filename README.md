@@ -1,54 +1,24 @@
 # Expense Tracker Application
 
-This project was created as a practical personal tool to help a friend who owned a sales trailer better understand her cash flow and monthly expenses. Despite having a healthy sales volume, she still faced recurring costs that were difficult to monitor without a clear structure. The goal was simply to organize the available financial information and make it easier to identify spending patterns and opportunities for reduction.
-
-This is not a finished commercial product or a fully production-ready solution. It was built as a support tool for analysis and day-to-day decision-making, especially for a small business context where a clearer view of expenses can make a meaningful difference.
+This is an expense tracking application built using Excel for data storage and Python for data processing. The application allows users to record, track, and analyze their expenses efficiently.
 
 ## Project Structure
 
 ```
 expense-tracker-excel
-├── data/
-│   ├── pdf/
-│   │   └── Silvana/
-│   ├── expenses.xlsx
-│   └── sample_data/
-├── scripts/
-│   ├── process_expenses.py
-│   ├── process_pdf.py
-│   ├── process_txt.py
-│   ├── process_excel.py
-│   └── generate_sample_expenses.py
-├── docs/
-│   └── requirements.md
-├── requirements.txt
-├── README.md
-├── LICENSE
-└── .gitignore
+├── data
+│   └── expenses.xlsx       # Excel file for recording expenses
+├── scripts
+│   └── process_expenses.py  # Python script for processing expenses
+└── docs
+    └── requirements.md      # Project requirements and dependencies
 ```
 
-## Main Objective
+## Features
 
-This project was developed as a simple support tool for financial review, especially in small business and service-based contexts where the owner needs a clearer view of:
-
-- income and expense trends;
-- cash flow by month;
-- category-based spending analysis;
-- recurring costs and opportunities for reduction;
-- historical reports for better planning and follow-up.
-
-## Key Features
-
-- Import and organize expense data from PDF, TXT, and Excel sources.
-- Categorize expenses and group them by type and period.
-- Generate monthly and daily financial summaries.
-- Analyze income versus expenses to assess financial health.
-- Highlight recurring costs and identify patterns of unnecessary spending.
-- Present financial results in a clear and usable dashboard interface.
-
-## Real-World Impact
-
-This tool was used in a real scenario with a sales trailer business to review a few months of financial data and organize the information in a simpler way. Even though the business had a healthy sales flow, the analysis helped identify areas where spending could be better controlled. In that context, the project proved useful in highlighting unnecessary costs and supporting more disciplined financial decisions.
+- Record expenses with details such as date, category, amount, and notes.
+- Process and analyze expense data using Python.
+- Generate summaries and insights from the recorded expenses.
 
 ## Setup Instructions
 
@@ -67,17 +37,16 @@ This tool was used in a real scenario with a sales trailer business to review a 
    pip install -r requirements.txt
    ```
 
-4. Place your financial files in the appropriate folder under the `data/` directory and run the processing scripts.
+4. Put your expenses files in data/YourName folder to start recording your expenses.
 
 ## Usage
 
-- Use the dashboard script in `scripts/process_expenses.py` to load and analyze the data.
-- Review the generated summaries and reports to identify cost reduction opportunities.
-- Adjust categories and analysis rules based on your specific financial context.
+- Use the `scripts/process_expenses.py` script to analyze your expenses. 
+- Modify the script as needed to fit your analysis requirements.
 
 ## Contributing
 
-Contributions are welcome. If you have suggestions for improving data processing, reporting, or usability, feel free to open an issue or submit a pull request.
+Contributions are welcome! Please submit a pull request or open an issue for any suggestions or improvements.
 
 ## License
 
