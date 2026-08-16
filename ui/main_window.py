@@ -47,7 +47,7 @@ def create_main_window(app):
     section1.pack(fill=tk.X, pady=10)
     row1 = tk.Frame(section1, bg="white")
     row1.pack(fill=tk.X, pady=8)
-    create_button(row1, "🔢 Processar PDFs", app.process_pdfs, COLORS["secondary"]).pack(side=tk.LEFT, padx=5)
+    create_button(row1, "🔢 Processar PDFs", lambda: run_process_pdfs(app), COLORS["secondary"]).pack(side=tk.LEFT, padx=5)
     create_button(row1, "📥 Ler Dados", app.load_data, COLORS["success"]).pack(side=tk.LEFT, padx=5)
 
     section2 = tk.LabelFrame(main_frame, text="📊 Análise e Resumos", font=("Segoe UI", 11, "bold"), bg="white", fg=COLORS["primary"], padx=15, pady=12)
@@ -88,6 +88,53 @@ def create_main_window(app):
     tk.Button(footer_right, text="❌ Sair", command=root.quit, bg=COLORS["danger"], fg="white", font=("Segoe UI", 9, "bold"), padx=20, pady=5, relief=tk.FLAT, cursor="hand2").pack()
 
     root.mainloop()
+
+
+def run_process_pdfs(app):
+    window = tk.Toplevel()
+    window.title("Processar PDFs")
+    window.geometry("380x140")
+    window.resizable(False, False)
+    window.configure(bg=COLORS["light_bg"])
+
+    tk.Label(
+        window,
+        text=f"Processando PDFs de '{app.business_name}'...",
+        bg=COLORS["light_bg"],
+        fg=COLORS["text"],
+        font=("Segoe UI", 11, "bold"),
+        wraplength=320,
+    ).pack(pady=(28, 10))
+    progress = ttk.Progressbar(window, mode="indeterminate")
+    progress.pack(fill=tk.X, padx=24)
+    progress.start(12)
+    window.update_idletasks()
+
+    def finish_success():
+        progress.stop()
+        window.destroy()
+        from tkinter import messagebox
+        messagebox.showinfo(
+            "PDFs",
+            f"PDFs processados para '{app.business_name}' com sucesso.\nClique em 'Ler Dados' para carregar as novas transações.",
+        )
+
+    def finish_error(exc):
+        progress.stop()
+        window.destroy()
+        from tkinter import messagebox
+        messagebox.showerror("Erro ao processar PDFs", str(exc))
+
+    def worker():
+        # A extração de PDF (PyPDF2) é pesada; roda fora da thread principal do Tkinter.
+        try:
+            app.process_pdfs()
+        except Exception as exc:
+            window.after(0, lambda: finish_error(exc))
+            return
+        window.after(0, finish_success)
+
+    threading.Thread(target=worker, daemon=True).start()
 
 
 def show_summary_dialog(app):

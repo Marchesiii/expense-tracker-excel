@@ -25,16 +25,7 @@ class ExpenseTrackerApp:
         self.business_name = "Silvana"
 
     def process_pdfs(self):
-        try:
-            process_pdfs_by_name(self.business_name)
-        except Exception as exc:
-            messagebox.showerror("Erro ao processar PDFs", str(exc))
-            return
-
-        messagebox.showinfo(
-            "PDFs",
-            f"PDFs processados para '{self.business_name}' com sucesso.\nClique em 'Ler Dados' para carregar as novas transações.",
-        )
+        process_pdfs_by_name(self.business_name)
 
     def load_data(self):
         self.dataframe = load_all_expenses(self.business_name)

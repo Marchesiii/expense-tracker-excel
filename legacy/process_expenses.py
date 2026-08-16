@@ -1,7 +1,15 @@
 # Script legado (pré-refatoração). Toda a lógica aqui já foi portada e reorganizada
 # em app/ (orquestração), services/ (regras de negócio) e ui/ (interface Tkinter).
-# Mantido apenas como referência histórica; não é usado pela aplicação ativa (main.py)
-# e seus imports relativos (process_pdf, process_txt) não resolvem fora de scripts/.
+# Mantido apenas como referência histórica; não é usado pela aplicação ativa (main.py).
+# Precisa ser executado a partir da raiz do projeto (ex.: `python -m legacy.process_expenses`)
+# para que os imports de scripts.* sejam resolvidos.
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from time import sleep
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -9,8 +17,8 @@ import seaborn as sns
 import os
 import tkinter as tk
 from tkinter import messagebox, ttk
-from process_pdf import process_pdfs_by_name
-from process_txt import read_txt_expenses_from_folder
+from scripts.process_pdf import process_pdfs_by_name
+from scripts.process_txt import read_txt_expenses_from_folder
 
 
 all_expenses_df = pd.DataFrame()
